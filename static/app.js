@@ -1,5 +1,6 @@
 const API_AUDIO_URL = "/api/audio/";
 const API_VIDEO_URL = "/api/video/";
+const API_IMAGE_URL = "/api/image/";
 const API_RECORDS_URL = "/api/records/";
 const API_CREATE_RECORD_URL = "/api/records/create/";
 const API_DELETE_RECORD_URL = (id) => `/api/records/${id}/delete/`;
@@ -245,6 +246,41 @@ async function handleGenerate() {
       audioPlayer.src = record.path;
       audioPreview.style.display = "block";
       audioPlayer.play();
+      addRecord(record);
+    } catch (err) {
+      loadingText.textContent = "生成失败";
+      alert(`生成失败：${err.message}`);
+    } finally {
+      generateBtn.disabled = false;
+      generateBtn.textContent = "生成";
+      generating = false;
+    }
+    return;
+  }
+
+  if (currentMode === "image") {
+    try {
+      const resp = await fetch(API_IMAGE_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": getCSRFToken(),
+        },
+        body: JSON.stringify({ prompt, model, style }),
+        credentials: "same-origin",
+      });
+
+      if (!resp.ok) {
+        const msg = await getErrorMessage(resp);
+        throw new Error(msg || "生成失败");
+      }
+
+      const data = await resp.json();
+      const record = hydrateRecordFromServer(data.record);
+
+      loadingBox.style.display = "none";
+      imageResult.src = record.path;
+      imageResult.style.display = "block";
       addRecord(record);
     } catch (err) {
       loadingText.textContent = "生成失败";

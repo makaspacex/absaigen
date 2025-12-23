@@ -67,6 +67,7 @@ def _read_result_bytes(result) -> bytes:
             or candidate.get("video")
             or candidate.get("file")
             or candidate.get("filepath")
+            or candidate.get("image")
         )
     elif isinstance(candidate, str):
         path = candidate
@@ -210,6 +211,69 @@ def generate_audio(request):
         model=model_name,
         prompt=prompt,
         voice=voice,
+        file=saved_path,
+        result_url=default_storage.url(saved_path),
+    )
+
+    return JsonResponse({"record": _serialize_record(record)}, status=201)
+
+
+@login_required
+@require_POST
+def generate_image(request):
+    try:
+        payload = json.loads(request.body or "{}")
+    except json.JSONDecodeError:
+        return HttpResponseBadRequest("Invalid JSON body")
+
+    prompt = payload.get("prompt", "").strip()
+    model_name = payload.get("model", "").strip() or "广科院"
+    style = payload.get("style", "")
+
+    if not prompt:
+        return HttpResponseBadRequest("prompt is required")
+
+    if model_name != "广科院":
+        return JsonResponse({"error": "暂未实现该模型的图像生成"}, status=400)
+
+    service_model = "sd3.5-medium"
+    try:
+        client = Client(f"http://127.0.0.1:9997/{service_model}/")
+        result = client.predict(
+            prompt=prompt,
+            n=1,
+            size_width=1024,
+            size_height=1024,
+            guidance_scale=-1,
+            num_inference_steps=-1,
+            negative_prompt=None,
+            sampler_name="default",
+            api_name="/text_generate_image",
+        )
+        image_bytes = _read_result_bytes(result)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.exception("image generation request failed")
+        return JsonResponse({"error": "图像生成失败", "detail": str(exc)}, status=502)
+
+    suffix = ".png"
+    if isinstance(result, str):
+        suffix = Path(result).suffix or suffix
+    elif isinstance(result, (list, tuple)) and result:
+        path = None
+        first = result[0]
+        if isinstance(first, dict):
+            path = first.get("image") or first.get("path") or first.get("name")
+        elif isinstance(first, str):
+            path = first
+        if path:
+            suffix = Path(path).suffix or suffix
+    filename = f"image_{uuid4().hex}{suffix}"
+    saved_path = default_storage.save(f"image/{filename}", ContentFile(image_bytes))
+    record = MediaRecord.objects.create(
+        media_type="image",
+        model=model_name,
+        prompt=prompt,
+        style=style,
         file=saved_path,
         result_url=default_storage.url(saved_path),
     )
