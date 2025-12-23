@@ -750,11 +750,39 @@
       box-shadow: 0 0 14px rgba(56,189,248,0.7);
     }
 
+    .login-error {
+      margin-bottom: 14px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid rgba(248,113,113,0.7);
+      background: rgba(248,113,113,0.08);
+      color: #fecdd3;
+      font-size: 13px;
+    }
+
+    .logout-form {
+      margin: 0;
+    }
+
+    .btn-logout {
+      padding: 6px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(248,113,113,0.7);
+      background: radial-gradient(circle at 20% 0,rgba(248,113,113,0.25),rgba(15,23,42,0.9));
+      color: #fecdd3;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .btn-logout:hover {
+      box-shadow: 0 0 10px rgba(248,113,113,0.5);
+    }
+
     .hidden { display: none; }
   </style>
 </head>
 <body>
-
+{% if not user.is_authenticated %}
 <!-- 登录页面 -->
 <div id="loginPage" class="login-page">
   <div class="login-title">
@@ -769,27 +797,27 @@
   </div>
   <div class="login-main">
     <div class="login-box neon-card">
-      <div class="login-inner">
+      <form class="login-inner" method="post" action="">
+        {% csrf_token %}
+        {% if login_error %}
+        <div class="login-error">{{ login_error }}</div>
+        {% endif %}
         <div class="login-field">
           <label class="login-label">用户名：</label>
-          <input id="username" class="login-input" type="text" />
+          <input id="username" name="username" class="login-input" type="text" value="{{ login_username|default:'' }}" autocomplete="username" required />
         </div>
         <div class="login-field">
           <label class="login-label">密&nbsp;&nbsp;&nbsp;码：</label>
-          <input id="password" class="login-input" type="password" />
+          <input id="password" name="password" class="login-input" type="password" autocomplete="current-password" required />
         </div>
-        <div class="login-field">
-          <label class="login-label">验证码：</label>
-          <input id="captcha" class="login-input" type="text" />
-        </div>
-        <button class="btn-login" onclick="handleLogin()">登录</button>
-      </div>
+        <button class="btn-login" type="submit">登录</button>
+      </form>
     </div>
   </div>
 </div>
-
+{% else %}
 <!-- 主系统页面 -->
-<div id="appPage" class="hidden">
+<div id="appPage">
   <div class="app-header">
     <div class="app-title-block">
       <div class="app-title-main">
@@ -803,8 +831,12 @@
       </div>
       <div class="user-pill">
         <div class="user-avatar"></div>
-        <span>Admin</span>
+        <span>{{ request.user.username }}</span>
       </div>
+      <form class="logout-form" method="post" action="{% url 'logout' %}">
+        {% csrf_token %}
+        <button type="submit" class="btn-logout">退出</button>
+      </form>
     </div>
   </div>
 
@@ -938,17 +970,13 @@
   </div>
 </div>
 
+{% endif %}
+
 <script>
   let currentMode = "image"; // image | audio | video
   let generating = false;
   let mediaStore = [];
   let currentFilter = "all";
-
-  function handleLogin() {
-    document.getElementById("loginPage").classList.add("hidden");
-    document.getElementById("appPage").classList.remove("hidden");
-  }
-
   // 切换图像/音频/视频栏目
   function switchMode(mode, elem) {
     if (generating) return;
