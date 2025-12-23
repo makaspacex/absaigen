@@ -7,6 +7,7 @@ model_weights
 *.log.*
 .env.prod
 .env.dev
+.env.local
 logs/
 conf.yaml
 .DS_Store
@@ -146,6 +147,7 @@ celerybeat.pid
 
 # Environments
 .env
+.env.local
 .venv
 env/
 venv/

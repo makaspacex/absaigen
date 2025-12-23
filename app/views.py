@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from pathlib import Path
 from uuid import uuid4
 
@@ -42,6 +43,38 @@ def logout_view(request):
     if request.method == "POST":
         logout(request)
     return redirect("index")
+
+
+def _load_env_file(path: Path) -> dict:
+    env = {}
+    if not path.exists():
+        return env
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        env[key.strip()] = value.strip()
+    return env
+
+
+def _load_xinference_base_url() -> str:
+    # priority: env var > env.local > .env > default
+    env_val = os.environ.get("XINFERENCE_BASE_URL")
+    if env_val:
+        return env_val.rstrip("/")
+
+    for fname in ("env.local", ".env"):
+        env_map = _load_env_file(BASE_DIR / fname)
+        if "XINFERENCE_BASE_URL" in env_map:
+            return env_map["XINFERENCE_BASE_URL"].rstrip("/")
+
+    return "http://127.0.0.1:9997"
+
+
+XINFERENCE_BASE_URL = _load_xinference_base_url()
 
 
 def _read_result_bytes(result) -> bytes:
@@ -183,7 +216,7 @@ def generate_audio(request):
 
     if model_name in {"广科院", "FishSpeech-1.5"}:
         try:
-            client = Client("http://127.0.0.1:9997/FishSpeech-1.5/")
+            client = Client(f"{XINFERENCE_BASE_URL}/FishSpeech-1.5/")
             result = client.predict(
                 input_text=prompt,
                 voice=voice or "",
@@ -238,7 +271,7 @@ def generate_image(request):
 
     service_model = "sd3.5-medium"
     try:
-        client = Client(f"http://127.0.0.1:9997/{service_model}/")
+        client = Client(f"{XINFERENCE_BASE_URL}/{service_model}/")
         result = client.predict(
             prompt=prompt,
             n=1,
@@ -307,7 +340,7 @@ def generate_video(request):
 
     service_model = "Wan2.1-1.3B"
     try:
-        client = Client(f"http://127.0.0.1:9997/{service_model}/")
+        client = Client(f"{XINFERENCE_BASE_URL}/{service_model}/")
         result = client.predict(
             prompt=prompt,
             negative_prompt=negative_prompt,
