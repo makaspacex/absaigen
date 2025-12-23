@@ -10,7 +10,7 @@ model_weights
 logs/
 conf.yaml
 .DS_Store
-
+media/
 *.build
 app.pyi
 
