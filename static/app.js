@@ -1,4 +1,5 @@
 const API_AUDIO_URL = "/api/audio/";
+const API_VIDEO_URL = "/api/video/";
 const API_RECORDS_URL = "/api/records/";
 const API_CREATE_RECORD_URL = "/api/records/create/";
 const API_DELETE_RECORD_URL = (id) => `/api/records/${id}/delete/`;
@@ -6,6 +7,22 @@ const API_DOWNLOAD_RECORD_URL = (id) => `/api/records/${id}/download/`;
 const API_DOWNLOAD_BATCH_URL = "/api/records/download/";
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function getErrorMessage(resp) {
+  try {
+    const data = await resp.clone().json();
+    if (data.error && data.detail) return `${data.error}：${data.detail}`;
+    if (data.error) return data.error;
+    if (data.detail) return data.detail;
+  } catch (e) {
+    /* fall back to text */
+  }
+  try {
+    return await resp.text();
+  } catch (e) {
+    return "未知错误";
+  }
+}
 
 function getCSRFToken() {
   const name = "csrftoken=";
@@ -131,7 +148,7 @@ function switchMode(mode, elem) {
       `;
   } else if (mode === "video") {
     placeholder.querySelector(".preview-placeholder-title").textContent =
-      "视频生成预览区域（完成后会播放 ./2.mp4）";
+      "视频生成预览区域（生成后将自动播放结果）";
     styleLabel.textContent = "主题风格：";
     styleOptions.classList.remove("hidden");
     voiceOptions.classList.add("hidden");
@@ -217,8 +234,8 @@ async function handleGenerate() {
       });
 
       if (!resp.ok) {
-        const text = await resp.text();
-        throw new Error(text || "生成失败");
+        const msg = await getErrorMessage(resp);
+        throw new Error(msg || "生成失败");
       }
 
       const data = await resp.json();
@@ -240,10 +257,43 @@ async function handleGenerate() {
     return;
   }
 
-  let waitMs = 5000;
   if (currentMode === "video") {
-    waitMs = 20000;
+    try {
+      const resp = await fetch(API_VIDEO_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": getCSRFToken(),
+        },
+        body: JSON.stringify({ prompt, model }),
+        credentials: "same-origin",
+      });
+
+      if (!resp.ok) {
+        const msg = await getErrorMessage(resp);
+        throw new Error(msg || "生成失败");
+      }
+
+      const data = await resp.json();
+      const record = hydrateRecordFromServer(data.record);
+
+      loadingBox.style.display = "none";
+      videoPlayer.src = record.path;
+      videoPreview.style.display = "block";
+      videoPlayer.play();
+      addRecord(record);
+    } catch (err) {
+      loadingText.textContent = "生成失败";
+      alert(`生成失败：${err.message}`);
+    } finally {
+      generateBtn.disabled = false;
+      generateBtn.textContent = "生成";
+      generating = false;
+    }
+    return;
   }
+
+  let waitMs = 5000;
   await delay(waitMs);
   loadingBox.style.display = "none";
 

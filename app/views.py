@@ -17,6 +17,7 @@ from gradio_client import Client
 from .models import MediaRecord
 
 logger = logging.getLogger(__name__)
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 def index(request):
@@ -43,25 +44,35 @@ def logout_view(request):
     return redirect("index")
 
 
-def _read_audio_bytes(result) -> bytes:
+def _read_result_bytes(result) -> bytes:
     """
-    Attempt to load audio bytes from a gradio_client result which may be:
+    Attempt to load binary bytes from a gradio_client result which may be:
     - a local file path (str)
     - a URL (str)
     - a list containing the above or dicts with name/path/url
     - a dict with name/path/url
     """
+    if isinstance(result, (bytes, bytearray)):
+        return bytes(result)
+
     path = None
     candidate = result
     if isinstance(candidate, (list, tuple)) and candidate:
         candidate = candidate[0]
     if isinstance(candidate, dict):
-        path = candidate.get("name") or candidate.get("path") or candidate.get("url")
+        path = (
+            candidate.get("name")
+            or candidate.get("path")
+            or candidate.get("url")
+            or candidate.get("video")
+            or candidate.get("file")
+            or candidate.get("filepath")
+        )
     elif isinstance(candidate, str):
         path = candidate
 
     if not path:
-        raise ValueError("未找到音频结果路径")
+        raise ValueError(f"未找到结果文件路径，返回内容: {result!r}")
 
     if isinstance(path, str) and path.startswith("http"):
         resp = requests.get(path, timeout=60)
@@ -180,7 +191,7 @@ def generate_audio(request):
                 prompt_text=prompt,
                 api_name="/tts_generate",
             )
-            audio_bytes = _read_audio_bytes(result)
+            audio_bytes = _read_result_bytes(result)
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("audio generation request failed")
             return JsonResponse(
@@ -199,6 +210,68 @@ def generate_audio(request):
         model=model_name,
         prompt=prompt,
         voice=voice,
+        file=saved_path,
+        result_url=default_storage.url(saved_path),
+    )
+
+    return JsonResponse({"record": _serialize_record(record)}, status=201)
+
+
+@login_required
+@require_POST
+def generate_video(request):
+    try:
+        payload = json.loads(request.body or "{}")
+    except json.JSONDecodeError:
+        return HttpResponseBadRequest("Invalid JSON body")
+
+    prompt = payload.get("prompt", "").strip()
+    model_name = payload.get("model", "").strip() or "广科院"
+    negative_prompt = payload.get("negative_prompt", "") or ""
+    num_frames = int(payload.get("num_frames", 16) or 16)
+    fps = int(payload.get("fps", 8) or 8)
+    num_inference_steps = int(payload.get("num_inference_steps", 25) or 25)
+    guidance_scale = float(payload.get("guidance_scale", 7.5) or 7.5)
+    width = int(payload.get("width", 512) or 512)
+    height = int(payload.get("height", 512) or 512)
+
+    if not prompt:
+        return HttpResponseBadRequest("prompt is required")
+
+    if model_name != "广科院":
+        return JsonResponse({"error": "暂未实现该模型的视频生成"}, status=400)
+
+    service_model = "Wan2.1-1.3B"
+    try:
+        client = Client(f"http://127.0.0.1:9997/{service_model}/")
+        result = client.predict(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            num_frames=num_frames,
+            fps=fps,
+            num_inference_steps=num_inference_steps,
+            guidance_scale=guidance_scale,
+            width=width,
+            height=height,
+            api_name="/text_generate_video",
+        )
+        video_bytes = _read_result_bytes(result)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.exception("video generation request failed")
+        message = str(exc)
+        if "ftfy" in message.lower():
+            message = "xinference 模型环境缺少 ftfy，请在运行 xinference 的环境执行 `pip install ftfy` 并重启服务。"
+        return JsonResponse({"error": "视频生成失败", "detail": message}, status=502)
+
+    suffix = ".mp4"
+    if isinstance(result, str):
+        suffix = Path(result).suffix or suffix
+    filename = f"video_{uuid4().hex}{suffix}"
+    saved_path = default_storage.save(f"video/{filename}", ContentFile(video_bytes))
+    record = MediaRecord.objects.create(
+        media_type="video",
+        model=model_name,
+        prompt=prompt,
         file=saved_path,
         result_url=default_storage.url(saved_path),
     )

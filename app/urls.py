@@ -11,4 +11,5 @@ urlpatterns = [
     path("api/records/<int:pk>/download/", views.download_record, name="download_record"),
     path("api/records/download/", views.download_records_zip, name="download_records_zip"),
     path("api/audio/", views.generate_audio, name="generate_audio"),
+    path("api/video/", views.generate_video, name="generate_video"),
 ]
