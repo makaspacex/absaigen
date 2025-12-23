@@ -558,6 +558,56 @@
       max-height: calc(100vh - 170px);
       overflow-y: auto;
       padding-right: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .library-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .library-check {
+      accent-color: #38bdf8;
+    }
+
+    .library-action-btn {
+      padding: 4px 10px;
+      border-radius: 8px;
+      border: 1px solid rgba(148,163,184,0.5);
+      background: rgba(15,23,42,0.8);
+      color: #e5e7eb;
+      cursor: pointer;
+    }
+
+    .library-action-btn:hover {
+      border-color: rgba(56,189,248,0.6);
+    }
+
+    .library-selection {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      border: 1px dashed rgba(148,163,184,0.4);
+      border-radius: 10px;
+      background: rgba(15,23,42,0.6);
+    }
+
+    .library-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .library-pagination {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      margin-top: 10px;
     }
 
     .library-empty {

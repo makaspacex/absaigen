@@ -1,6 +1,9 @@
 const API_AUDIO_URL = "/api/audio/";
 const API_RECORDS_URL = "/api/records/";
 const API_CREATE_RECORD_URL = "/api/records/create/";
+const API_DELETE_RECORD_URL = (id) => `/api/records/${id}/delete/`;
+const API_DOWNLOAD_RECORD_URL = (id) => `/api/records/${id}/download/`;
+const API_DOWNLOAD_BATCH_URL = "/api/records/download/";
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -33,6 +36,10 @@ let currentMode = "image"; // image | audio | video
 let generating = false;
 let mediaStore = [];
 let currentFilter = "all";
+let libraryPage = 1;
+let libraryPageSize = 10;
+let libraryTotal = 0;
+let selectedIds = new Set();
 
 function addRecord(record) {
   if (!record) return;
@@ -40,14 +47,23 @@ function addRecord(record) {
   renderLibrary();
 }
 
-async function loadRecords() {
+async function loadRecords(page = 1) {
+  libraryPage = page;
+  const params = new URLSearchParams({
+    page: libraryPage,
+    page_size: libraryPageSize,
+  });
+  if (currentFilter !== "all") params.append("media_type", currentFilter);
   try {
-    const resp = await fetch(API_RECORDS_URL, { credentials: "same-origin" });
+    const resp = await fetch(`${API_RECORDS_URL}?${params.toString()}`, {
+      credentials: "same-origin",
+    });
     if (!resp.ok) throw new Error(await resp.text());
     const data = await resp.json();
     mediaStore = (data.records || [])
       .map(hydrateRecordFromServer)
       .filter(Boolean);
+    libraryTotal = data.total || mediaStore.length;
     renderLibrary();
   } catch (err) {
     console.warn("加载历史记录失败", err);
@@ -291,13 +307,14 @@ function setLibraryFilter(filter, elem) {
     .querySelectorAll(".filter-pill")
     .forEach((btn) => btn.classList.remove("active"));
   elem.classList.add("active");
-  renderLibrary();
+  loadRecords(1);
 }
 
 function renderLibrary() {
   const listEl = document.getElementById("libraryList");
   const statsEl = document.getElementById("libraryStats");
   listEl.innerHTML = "";
+  selectedIds = new Set();
 
   const filtered = mediaStore.filter((item) => {
     if (currentFilter === "all") return true;
@@ -308,7 +325,9 @@ function renderLibrary() {
     statsEl.textContent =
       mediaStore.length === 0
         ? "暂无记录"
-        : `共 ${mediaStore.length} 条生成记录，当前显示 ${filtered.length} 条`;
+        : `共 ${libraryTotal || mediaStore.length} 条生成记录，当前显示 ${
+            filtered.length
+          } 条`;
   }
 
   if (filtered.length === 0) {
@@ -319,10 +338,40 @@ function renderLibrary() {
     return;
   }
 
+  const selectionBar = document.createElement("div");
+  selectionBar.className = "library-selection";
+  selectionBar.innerHTML = `
+    <span>已选 ${selectedIds.size} 项</span>
+    <div class="library-actions">
+      <button id="btnDownloadSelected" class="filter-pill">打包下载</button>
+      <button id="btnDeleteSelected" class="filter-pill">删除</button>
+    </div>
+  `;
+  selectionBar
+    .querySelector("#btnDownloadSelected")
+    .addEventListener("click", (e) => {
+      e.stopPropagation();
+      downloadSelectedZip();
+    });
+  selectionBar
+    .querySelector("#btnDeleteSelected")
+    .addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteSelected();
+    });
+  listEl.appendChild(selectionBar);
+
   filtered.forEach((item) => {
     const row = document.createElement("div");
     row.className = "library-item";
-    row.onclick = () => previewFromRecord(item);
+    row.onclick = (e) => {
+      if (
+        e.target.closest(".library-action-btn") ||
+        e.target.type === "checkbox"
+      )
+        return;
+      previewFromRecord(item);
+    };
 
     const infoMain = document.createElement("div");
     infoMain.className = "library-info-main";
@@ -371,11 +420,32 @@ function renderLibrary() {
     timeSpan.className = "library-time";
     timeSpan.textContent = item.time;
 
+    const controls = document.createElement("div");
+    controls.className = "library-controls";
+    controls.innerHTML = `
+      <input type="checkbox" class="library-check" data-id="${item.id}" />
+      <button class="library-action-btn" data-action="download">下载</button>
+      <button class="library-action-btn" data-action="delete">删除</button>
+    `;
+    controls.querySelector(".library-check").onchange = (e) =>
+      toggleSelect(item.id, e.target.checked);
+    controls.querySelector('[data-action="download"]').onclick = (e) => {
+      e.stopPropagation();
+      downloadRecord(item.id);
+    };
+    controls.querySelector('[data-action="delete"]').onclick = (e) => {
+      e.stopPropagation();
+      deleteRecord(item.id);
+    };
+
     row.appendChild(infoMain);
     row.appendChild(timeSpan);
+    row.appendChild(controls);
 
     listEl.appendChild(row);
   });
+
+  renderPagination(listEl);
 }
 
 // 从生成内容库点击记录，回放到预览区
@@ -421,4 +491,90 @@ if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", loadRecords);
 } else {
   loadRecords();
+}
+
+function renderPagination(container) {
+  const totalPages = Math.ceil((libraryTotal || 0) / libraryPageSize) || 1;
+  if (totalPages <= 1) return;
+  const nav = document.createElement("div");
+  nav.className = "library-pagination";
+  nav.innerHTML = `
+    <button class="filter-pill" id="pagePrev"${
+      libraryPage === 1 ? " disabled" : ""
+    }>上一页</button>
+    <span>第 ${libraryPage} / ${totalPages} 页</span>
+    <button class="filter-pill" id="pageNext"${
+      libraryPage >= totalPages ? " disabled" : ""
+    }>下一页</button>
+  `;
+  nav.querySelector("#pagePrev").onclick = () => {
+    if (libraryPage > 1) loadRecords(libraryPage - 1);
+  };
+  nav.querySelector("#pageNext").onclick = () => {
+    if (libraryPage < totalPages) loadRecords(libraryPage + 1);
+  };
+  container.appendChild(nav);
+}
+
+function toggleSelect(id, checked) {
+  if (checked) selectedIds.add(id);
+  else selectedIds.delete(id);
+}
+
+async function deleteRecord(id) {
+  if (!confirm("确定删除该记录？")) return;
+  try {
+    const resp = await fetch(API_DELETE_RECORD_URL(id), {
+      method: "POST",
+      headers: { "X-CSRFToken": getCSRFToken() },
+      credentials: "same-origin",
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    mediaStore = mediaStore.filter((r) => r.id !== id);
+    libraryTotal = Math.max(0, libraryTotal - 1);
+    renderLibrary();
+  } catch (err) {
+    alert(`删除失败：${err.message}`);
+  }
+}
+
+async function deleteSelected() {
+  const ids = Array.from(selectedIds);
+  if (!ids.length) return;
+  if (!confirm(`确定删除选中的 ${ids.length} 条记录？`)) return;
+  await Promise.all(ids.map((id) => deleteRecord(id)));
+  selectedIds.clear();
+  loadRecords(libraryPage);
+}
+
+function downloadRecord(id) {
+  window.open(API_DOWNLOAD_RECORD_URL(id), "_blank");
+}
+
+async function downloadSelectedZip() {
+  const ids = Array.from(selectedIds);
+  if (!ids.length) return;
+  try {
+    const resp = await fetch(API_DOWNLOAD_BATCH_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": getCSRFToken(),
+      },
+      body: JSON.stringify({ ids }),
+      credentials: "same-origin",
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    const blob = await resp.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "media_batch.zip";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  } catch (err) {
+    alert(`下载失败：${err.message}`);
+  }
 }

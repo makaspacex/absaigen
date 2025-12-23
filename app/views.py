@@ -9,6 +9,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.http import HttpResponseBadRequest, JsonResponse
+from django.http.response import FileResponse, HttpResponseNotFound
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_GET, require_POST
 from gradio_client import Client
@@ -87,8 +88,26 @@ def _serialize_record(record: MediaRecord) -> dict:
 @login_required
 @require_GET
 def list_records(request):
-    records = MediaRecord.objects.all()[:200]
-    return JsonResponse({"records": [_serialize_record(r) for r in records]})
+    media_type = request.GET.get("media_type")
+    page = max(int(request.GET.get("page", 1)), 1)
+    page_size = max(min(int(request.GET.get("page_size", 10)), 50), 1)
+
+    qs = MediaRecord.objects.all()
+    if media_type in {"image", "audio", "video"}:
+        qs = qs.filter(media_type=media_type)
+
+    total = qs.count()
+    start = (page - 1) * page_size
+    end = start + page_size
+    records = qs[start:end]
+    return JsonResponse(
+        {
+            "records": [_serialize_record(r) for r in records],
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+        }
+    )
 
 
 @login_required
@@ -118,6 +137,21 @@ def create_record(request):
         result_url=result_url,
     )
     return JsonResponse({"record": _serialize_record(record)}, status=201)
+
+
+@login_required
+@require_POST
+def delete_record(request, pk: int):
+    try:
+        record = MediaRecord.objects.get(pk=pk)
+    except MediaRecord.DoesNotExist:
+        return HttpResponseNotFound("record not found")
+
+    if record.file and default_storage.exists(record.file.name):
+        default_storage.delete(record.file.name)
+
+    record.delete()
+    return JsonResponse({"ok": True})
 
 
 @login_required
@@ -170,3 +204,61 @@ def generate_audio(request):
     )
 
     return JsonResponse({"record": _serialize_record(record)}, status=201)
+
+
+@login_required
+@require_GET
+def download_record(request, pk: int):
+    try:
+        record = MediaRecord.objects.get(pk=pk)
+    except MediaRecord.DoesNotExist:
+        return HttpResponseNotFound("record not found")
+
+    if record.file:
+        file_path = Path(record.file.path)
+        if file_path.exists():
+            return FileResponse(
+                file_path.open("rb"),
+                as_attachment=True,
+                filename=file_path.name,
+            )
+    if record.result_url:
+        return redirect(record.result_url)
+    return HttpResponseNotFound("file not found")
+
+
+@login_required
+@require_POST
+def download_records_zip(request):
+    try:
+        payload = json.loads(request.body or "{}")
+    except json.JSONDecodeError:
+        return HttpResponseBadRequest("Invalid JSON body")
+
+    ids = payload.get("ids") or []
+    if not isinstance(ids, list) or not ids:
+        return HttpResponseBadRequest("ids is required")
+
+    records = MediaRecord.objects.filter(id__in=ids)
+    files = []
+    for rec in records:
+        if rec.file and default_storage.exists(rec.file.name):
+            files.append(Path(default_storage.path(rec.file.name)))
+
+    if not files:
+        return HttpResponseNotFound("no files to download")
+
+    import io
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for file_path in files:
+            zip_file.write(file_path, arcname=file_path.name)
+    buffer.seek(0)
+
+    return FileResponse(
+        buffer,
+        as_attachment=True,
+        filename="media_batch.zip",
+    )
