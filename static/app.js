@@ -58,6 +58,7 @@ let libraryPage = 1;
 let libraryPageSize = 10;
 let libraryTotal = 0;
 let selectedIds = new Set();
+let hasLoadedRecords = false;
 
 function addRecord(record) {
   if (!record) return;
@@ -66,6 +67,7 @@ function addRecord(record) {
 }
 
 async function loadRecords(page = 1) {
+  selectedIds = new Set();
   libraryPage = page;
   const params = new URLSearchParams({
     page: libraryPage,
@@ -82,6 +84,7 @@ async function loadRecords(page = 1) {
       .map(hydrateRecordFromServer)
       .filter(Boolean);
     libraryTotal = data.total || mediaStore.length;
+    hasLoadedRecords = true;
     renderLibrary();
   } catch (err) {
     console.warn("加载历史记录失败", err);
@@ -176,6 +179,12 @@ function switchToLibrary(elem) {
 
   document.getElementById("generationMain").classList.add("hidden");
   document.getElementById("libraryMain").classList.remove("hidden");
+
+  if (hasLoadedRecords) {
+    renderLibrary();
+  } else {
+    loadRecords(libraryPage);
+  }
 }
 
 // 点击生成
@@ -400,7 +409,6 @@ function renderLibrary() {
   const listEl = document.getElementById("libraryList");
   const statsEl = document.getElementById("libraryStats");
   listEl.innerHTML = "";
-  selectedIds = new Set();
 
   const filtered = mediaStore.filter((item) => {
     if (currentFilter === "all") return true;
@@ -427,12 +435,26 @@ function renderLibrary() {
   const selectionBar = document.createElement("div");
   selectionBar.className = "library-selection";
   selectionBar.innerHTML = `
-    <span>已选 ${selectedIds.size} 项</span>
+    <span id="selectionCount">已选 ${selectedIds.size} 项</span>
     <div class="library-actions">
+      <button id="btnSelectAll" class="filter-pill">全选</button>
+      <button id="btnSelectInverse" class="filter-pill">反选</button>
       <button id="btnDownloadSelected" class="filter-pill">打包下载</button>
       <button id="btnDeleteSelected" class="filter-pill">删除</button>
     </div>
   `;
+  selectionBar
+    .querySelector("#btnSelectAll")
+    .addEventListener("click", (e) => {
+      e.stopPropagation();
+      selectAll(filtered);
+    });
+  selectionBar
+    .querySelector("#btnSelectInverse")
+    .addEventListener("click", (e) => {
+      e.stopPropagation();
+      invertSelection(filtered);
+    });
   selectionBar
     .querySelector("#btnDownloadSelected")
     .addEventListener("click", (e) => {
@@ -513,8 +535,9 @@ function renderLibrary() {
       <button class="library-action-btn" data-action="download">下载</button>
       <button class="library-action-btn" data-action="delete">删除</button>
     `;
-    controls.querySelector(".library-check").onchange = (e) =>
-      toggleSelect(item.id, e.target.checked);
+    const check = controls.querySelector(".library-check");
+    check.checked = selectedIds.has(item.id);
+    check.onchange = (e) => toggleSelect(item.id, e.target.checked);
     controls.querySelector('[data-action="download"]').onclick = (e) => {
       e.stopPropagation();
       downloadRecord(item.id);
@@ -574,7 +597,7 @@ function previewFromRecord(record) {
 }
 
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", loadRecords);
+  document.addEventListener("DOMContentLoaded", () => loadRecords());
 } else {
   loadRecords();
 }
@@ -605,10 +628,26 @@ function renderPagination(container) {
 function toggleSelect(id, checked) {
   if (checked) selectedIds.add(id);
   else selectedIds.delete(id);
+  renderLibrary();
 }
 
-async function deleteRecord(id) {
-  if (!confirm("确定删除该记录？")) return;
+function selectAll(list) {
+  list.forEach((item) => selectedIds.add(item.id));
+  renderLibrary();
+}
+
+function invertSelection(list) {
+  const next = new Set(selectedIds);
+  list.forEach((item) => {
+    if (next.has(item.id)) next.delete(item.id);
+    else next.add(item.id);
+  });
+  selectedIds = next;
+  renderLibrary();
+}
+
+async function deleteRecord(id, confirmSingle = true) {
+  if (confirmSingle && !confirm("确定删除该记录？")) return;
   try {
     const resp = await fetch(API_DELETE_RECORD_URL(id), {
       method: "POST",
@@ -628,7 +667,7 @@ async function deleteSelected() {
   const ids = Array.from(selectedIds);
   if (!ids.length) return;
   if (!confirm(`确定删除选中的 ${ids.length} 条记录？`)) return;
-  await Promise.all(ids.map((id) => deleteRecord(id)));
+  await Promise.all(ids.map((id) => deleteRecord(id, false)));
   selectedIds.clear();
   loadRecords(libraryPage);
 }
